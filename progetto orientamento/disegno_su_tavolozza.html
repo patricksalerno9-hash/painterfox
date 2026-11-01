@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>FoxPaint VR - Art Studio con Gomma e Slider</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+  <script>
+    // --- 1. COMPONENTE TELA DA DISEGNO 2D ---
+    AFRAME.registerComponent('paint-canvas', {
+      schema: {
+        width: { type: 'int', default: 1024 },
+        height: { type: 'int', default: 768 },
+        color: { type: 'color', default: '#39a66f' },
+        brushSize: { type: 'number', default: 8 }
+      },
+
+      init: function () {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = this.data.width;
+        this.canvas.height = this.data.height;
+        this.ctx = this.canvas.getContext('2d');
+
+        this.ctx.fillStyle = '#FFFFFF';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        this.isPainting = false;
+        this.lastPoint = null;
+        this.cursorEl = null;
+
+        this.onDrawStart = this.onDrawStart.bind(this);
+        this.onDrawEnd = this.onDrawEnd.bind(this);
+        this.applyTexture = this.applyTexture.bind(this);
+
+        if (this.el.getObject3D('mesh')) {
+          this.applyTexture();
+        }
+
+        this.el.addEventListener('object3dset', (evt) => {
+          if (evt.detail.name === 'mesh') {
+            this.applyTexture();
+          }
+        });
+
+        this.el.addEventListener('mousedown', this.onDrawStart);
+        this.el.addEventListener('mouseup', this.onDrawEnd);
+        this.el.addEventListener('mouseleave', this.onDrawEnd);
+        window.addEventListener('mouseup', this.onDrawEnd);
+      },
+
+      remove: function () {
+        window.removeEventListener('mouseup', this.onDrawEnd);
+      },
+
+      applyTexture: function () {
+        const mesh = this.el.getObject3D('mesh');
+        if (!mesh || !mesh.material) return;
+
+        this.texture = new THREE.CanvasTexture(this.canvas);
+        this.texture.needsUpdate = true;
+
+        mesh.material.map = this.texture;
+        mesh.material.needsUpdate = true;
+      },
+
+      getCanvasCoordinates: function (intersection) {
+        if (!intersection || !intersection.uv) return null;
+
+        const uv = intersection.uv;
+
+        return {
+          x: uv.x * this.canvas.width,
+          y: (1 - uv.y) * this.canvas.height
+        };
+      },
+
+      onDrawStart: function (evt) {
+        const coords = this.getCanvasCoordinates(evt.detail.intersection);
+        if (!coords) return;
+
+        this.isPainting = true;
+        this.lastPoint = coords;
+        this.cursorEl = evt.detail.cursorEl || null;
+
+        this.ctx.beginPath();
+        this.ctx.fillStyle = this.data.color;
+        this.ctx.arc(coords.x, coords.y, this.data.brushSize / 2, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        if (this.texture) {
+          this.texture.needsUpdate = true;
+        }
+
+        const fox = document.getElementById('fox-companion');
+        if (fox && fox.components['fox-tutorial']) {
+          fox.components['fox-tutorial'].onUserStartPaint();
+        }
+      },
+
+      tick: function () {
+        if (!this.isPainting || !this.cursorEl) return;
+
+        const raycaster = this.cursorEl.components.raycaster;
+        if (!raycaster) return;
+
+        const intersection = raycaster.getIntersection(this.el);
+        const coords = this.getCanvasCoordinates(intersection);
+        if (!coords || !this.lastPoint) return;
+
+        this.ctx.beginPath();
+        this.ctx.strokeStyle = this.data.color;
+        this.ctx.lineWidth = this.data.brushSize;
+        this.ctx.lineCap = 'round';
+        this.ctx.lineJoin = 'round';
+        this.ctx.moveTo(this.lastPoint.x, this.lastPoint.y);
+        this.ctx.lineTo(coords.x, coords.y);
+        this.ctx.stroke();
+
+        this.lastPoint = coords;
+
+        if (this.texture) {
+          this.texture.needsUpdate = true;
+        }
+      },
+
+      onDrawEnd: function () {
+        this.isPainting = false;
+        this.lastPoint = null;
+        this.cursorEl = null;
+      },
+
+      setColor: function (newColor) {
+        this.data.color = newColor;
+
+        const preview = document.getElementById('color-preview-sphere');
+        if (preview) {
+          preview.setAttribute('material', 'color', newColor);
+        }
+      },
+
+      clearCanvas: function () {
+        this.ctx.fillStyle = '#FFFFFF';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        if (this.texture) {
+          this.texture.needsUpdate = true;
+        }
+      }
+    });
+
+    // --- 2. COMPONENTE RUOTA CROMATICA RGB ---
+    AFRAME.registerComponent('color-wheel', {
+      schema: {
+        size: { type: 'int', default: 512 }
+      },
+
+      init: function () {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = this.data.size;
+        this.canvas.height = this.data.size;
+        this.ctx = this.canvas.getContext('2d');
+
+        this.drawWheel();
+
+        this.onColorPick = this.onColorPick.bind(this);
+        this.applyTexture = this.applyTexture.bind(this);
+
+        if (this.el.getObject3D('mesh')) {
+          this.applyTexture();
+        }
+
+        this.el.addEventListener('object3dset', (evt) => {
+          if (evt.detail.name === 'mesh') {
+            this.applyTexture();
+          }
+        });
+
+        this.el.addEventListener('click', this.onColorPick);
+      },
+
+      applyTexture: function () {
+        const mesh = this.el.getObject3D('mesh');
+        if (!mesh || !mesh.material) return;
+
+        this.texture = new THREE.CanvasTexture(this.canvas);
+        this.texture.generateMipmaps = false;
+        this.texture.minFilter = THREE.LinearFilter;
+        this.texture.needsUpdate = true;
+
+        mesh.material.map = this.texture;
+        mesh.material.transparent = true;
+        mesh.material.needsUpdate = true;
+      },
+
+      onColorPick: function (evt) {
+        if (!evt.detail.intersection || !evt.detail.intersection.uv) return;
+
+        const uv = evt.detail.intersection.uv;
+        const x = Math.floor(uv.x * this.canvas.width);
+        const y = Math.floor((1 - uv.y) * this.canvas.height);
+
+        if (x < 0 || y < 0 || x >= this.canvas.width || y >= this.canvas.height) return;
+
+        const pixel = this.ctx.getImageData(x, y, 1, 1).data;
+
+        if (pixel[3] > 0) {
+          const hex = '#' + (
+            (1 << 24) +
+            (pixel[0] << 16) +
+            (pixel[1] << 8) +
+            pixel[2]
+          ).toString(16).slice(1);
+
+          selezionaColore(hex);
+        }
+      },
+
+      drawWheel: function () {
+        const radius = this.canvas.width / 2;
+        const cx = radius;
+        const cy = radius;
+
+        const image = this.ctx.createImageData(this.canvas.width, this.canvas.height);
+        const data = image.data;
+
+        for (let x = -radius; x < radius; x++) {
+          for (let y = -radius; y < radius; y++) {
+            const dist = Math.sqrt(x * x + y * y);
+
+            if (dist <= radius) {
+              let angle = Math.atan2(y, x) * (180 / Math.PI);
+              if (angle < 0) angle += 360;
+
+              const hue = angle;
+              const saturation = dist / radius;
+              const rgb = this.hslToRgb(hue / 360, saturation, 0.5);
+
+              const px = Math.floor(x + cx);
+              const py = Math.floor(y + cy);
+              const index = (py * this.canvas.width + px) * 4;
+
+              data[index] = rgb[0];
+              data[index + 1] = rgb[1];
+              data[index + 2] = rgb[2];
+              data[index + 3] = 255;
+            }
+          }
+        }
+
+        this.ctx.putImageData(image, 0, 0);
+      },
+
+      hslToRgb: function (h, s, l) {
+        let r, g, b;
+
+        if (s === 0) {
+          r = g = b = l;
+        } else {
+          const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+          const p = 2 * l - q;
+
+          r = this.hueToRgb(p, q, h + 1 / 3);
+          g = this.hueToRgb(p, q, h);
+          b = this.hueToRgb(p, q, h - 1 / 3);
+        }
+
+        return [
+          Math.round(r * 255),
+          Math.round(g * 255),
+          Math.round(b * 255)
+        ];
+      },
+
+      hueToRgb: function (p, q, t) {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+
+        return p;
+      }
+    });
+
+    // --- 3. COMPONENTE SLIDER PER LA DIMENSIONE DEL PENNELLO ---
+    AFRAME.registerComponent('brush-slider', {
+      schema: {
+        min: { type: 'number', default: 2 },
+        max: { type: 'number', default: 50 },
+        width: { type: 'number', default: 0.5 }
+      },
+      init: function () {
+        this.el.addEventListener('click', (evt) => {
+          if (!evt.detail.intersection) return;
+          const point = evt.detail.intersection.point;
+          
+          const localPos = this.el.object3D.worldToLocal(point.clone());
+          const halfW = this.data.width / 2;
+          
+          let percent = (localPos.x + halfW) / this.data.width;
+          percent = Math.max(0, Math.min(1, percent));
+
+          const newSize = Math.round(this.data.min + percent * (this.data.max - this.data.min));
+          
+          const canvasEl = document.getElementById('canvas-surface');
+          if (canvasEl && canvasEl.components['paint-canvas']) {
+            canvasEl.components['paint-canvas'].data.brushSize = newSize;
+          }
+
+          const handle = document.getElementById('slider-handle');
+          if (handle) {
+            const newX = -halfW + (percent * this.data.width);
+            handle.setAttribute('position', `${newX} 0 0.02`);
+          }
+
+          const valueText = document.getElementById('slider-value-text');
+          if (valueText) {
+            valueText.setAttribute('value', `${newSize}px`);
+          }
+        });
+      }
+    });
+
+    // --- 4. COMPONENTE INTERAZIONE "ACCAREZZA LA VOLPINA" ---
+    AFRAME.registerComponent('pet-fox', {
+      init: function () {
+        const el = this.el;
+        const dialogText = document.getElementById('fox-dialog-text');
+        const model = document.getElementById('fox-3d-model');
+        const base = el.getAttribute('position');
+        const baseX = base.x, baseY = base.y, baseZ = base.z;
+
+        if (!model) return;
+
+        model.addEventListener('mouseenter', () => {
+          el.removeAttribute('animation');
+          el.setAttribute('animation', {
+            property: 'position',
+            from: `${baseX} ${baseY} ${baseZ}`,
+            to: `${baseX} ${baseY + 0.15} ${baseZ}`,
+            dir: 'alternate',
+            dur: 200,
+            loop: 2
+          });
+
+          if (dialogText) {
+            dialogText.setAttribute('value', 'Yippee! Che belle coccole! *purr*');
+          }
+        });
+
+        model.addEventListener('mouseleave', () => {
+          setTimeout(() => {
+            const fox = document.getElementById('fox-companion');
+
+            if (dialogText && fox && fox.components['fox-tutorial']) {
+              fox.components['fox-tutorial'].resetDialog();
+            }
+          }, 2000);
+        });
+      }
+    });
+
+    // --- 5. COMPONENTE TUTORIAL DELLA VOLPINA ---
+    AFRAME.registerComponent('fox-tutorial', {
+      init: function () {
+        this.step = 0;
+
+        this.messages = [
+          'Ciao! Benvenuto nel mio studio!\nAccarezzami o inizia a dipingere sulla tela!',
+          'Fantastico! Sotto la tela trovi la tavolozza e il tasto "Pulisci".',
+          'Stai andando benissimo! Crea il tuo capolavoro!'
+        ];
+
+        this.updateDialog();
+      },
+
+      updateDialog: function () {
+        const dialogText = document.getElementById('fox-dialog-text');
+
+        if (dialogText) {
+          dialogText.setAttribute('value', this.messages[this.step]);
+        }
+      },
+
+      onUserStartPaint: function () {
+        if (this.step === 0) {
+          this.step = 1;
+          this.updateDialog();
+        }
+      },
+
+      resetDialog: function () {
+        this.updateDialog();
+      }
+    });
+
+    // --- 6. FUNZIONI DELL’INTERFACCIA (Tavolozza, Pennello, Gomma, Pulisci) ---
+    let menuAperto = false;
+    let brushMenuAperto = false;
+    let isEraserActive = false;
+
+    function chiudiTuttiMenu() {
+      const paletteMenu = document.getElementById('palette-menu');
+      const brushMenu = document.getElementById('brush-menu');
+      if (paletteMenu) paletteMenu.setAttribute('position', '0 -10 -10');
+      if (brushMenu) brushMenu.setAttribute('position', '0 -10 -10');
+      menuAperto = false;
+      brushMenuAperto = false;
+    }
+
+    function togglePalette() {
+      const paletteMenu = document.getElementById('palette-menu');
+      if (!paletteMenu) return;
+
+      const eraStatoAperto = menuAperto;
+      chiudiTuttiMenu();
+
+      if (!eraStatoAperto) {
+        paletteMenu.setAttribute('position', '0 0.55 0');
+        menuAperto = true;
+      }
+    }
+
+    function toggleBrushMenu() {
+      const brushMenu = document.getElementById('brush-menu');
+      if (!brushMenu) return;
+
+      const eraStatoAperto = brushMenuAperto;
+      chiudiTuttiMenu();
+
+      if (!eraStatoAperto) {
+        brushMenu.setAttribute('position', '0 0.55 0');
+        brushMenuAperto = true;
+      }
+    }
+
+    function selezionaColore(colore) {
+      isEraserActive = false;
+      const eraserBtn = document.getElementById('eraser-btn');
+      if (eraserBtn) eraserBtn.setAttribute('color', '#555555');
+
+      const canvasEl = document.getElementById('canvas-surface');
+      if (canvasEl && canvasEl.components['paint-canvas']) {
+        canvasEl.components['paint-canvas'].setColor(colore);
+      }
+      chiudiTuttiMenu();
+    }
+
+    // --- ATTIVAZIONE / DISATTIVAZIONE GOMMA ---
+    function toggleEraser() {
+      chiudiTuttiMenu();
+      isEraserActive = !isEraserActive;
+      
+      const eraserBtn = document.getElementById('eraser-btn');
+      const canvasEl = document.getElementById('canvas-surface');
+
+      if (isEraserActive) {
+        // Attiva la gomma (imposta il colore del pennello a bianco #FFFFFF)
+        if (eraserBtn) eraserBtn.setAttribute('color', '#00ffcc'); // Evidenzia il bottone attivo
+        if (canvasEl && canvasEl.components['paint-canvas']) {
+          canvasEl.components['paint-canvas'].setColor('#FFFFFF');
+        }
+      } else {
+        // Disattiva la gomma (torna al colore precedente, es. verde o quello della preview)
+        if (eraserBtn) eraserBtn.setAttribute('color', '#555555');
+        const previewColor = document.getElementById('color-preview-sphere').getAttribute('material').color;
+        if (canvasEl && canvasEl.components['paint-canvas']) {
+          canvasEl.components['paint-canvas'].setColor(previewColor);
+        }
+      }
+    }
+
+    function pulisciTela() {
+      chiudiTuttiMenu();
+      const canvasEl = document.getElementById('canvas-surface');
+      if (canvasEl && canvasEl.components['paint-canvas']) {
+        canvasEl.components['paint-canvas'].clearCanvas();
+      }
+    }
+
+    // --- 7. COLLEGAMENTO DEI PULSANTI AI CLICK A-FRAME ---
+    window.addEventListener('DOMContentLoaded', () => {
+      const scene = document.querySelector('a-scene');
+
+      if (!scene) return;
+
+      const bindUI = () => {
+        const paletteButton = document.getElementById('palette-btn');
+        const brushButton = document.getElementById('brush-btn');
+        const eraserButton = document.getElementById('eraser-btn');
+        const clearButton = document.getElementById('pulisci-btn');
+        const quickColors = document.querySelectorAll('.quick-color');
+
+        if (paletteButton) paletteButton.addEventListener('click', togglePalette);
+        if (brushButton) brushButton.addEventListener('click', toggleBrushMenu);
+        if (eraserButton) eraserButton.addEventListener('click', toggleEraser);
+        if (clearButton) clearButton.addEventListener('click', pulisciTela);
+
+        quickColors.forEach((colorSwatch) => {
+          colorSwatch.addEventListener('click', () => {
+            selezionaColore(colorSwatch.getAttribute('data-color'));
+          });
+        });
+      };
+
+      if (scene.hasLoaded) {
+        bindUI();
+      } else {
+        scene.addEventListener('loaded', bindUI);
+      }
+    });
+  </script>
+</head>
+<body>
+
+  <a-scene>
+    <!-- ASSET SYSTEM -->
+    <a-assets>
+      <a-asset-item id="fox-model" src="assets/foxblend.glb"></a-asset-item>
+      <a-asset-item id="studio-model" src="assets/art_studio.glb"></a-asset-item>
+    </a-assets>
+
+    <!-- ILLUMINAZIONE -->
+    <a-light type="ambient" color="#ffeaa7" intensity="0.6"></a-light>
+    <a-light type="point" color="#fff" intensity="0.8" position="0 3 0"></a-light>
+
+    <!-- L'ART STUDIO 3D -->
+    <a-entity gltf-model="#studio-model" position="0 0 0" scale="1 1 1"></a-entity>
+
+    <!-- LA TELA DA DISEGNO -->
+    <a-entity id="tela-holder" position="0 1.6 -1.5">
+      <a-box width="1.7" height="1.3" depth="0.05" color="#5C4033" position="0 0 -0.03"></a-box>
+
+      <a-plane
+        id="canvas-surface"
+        class="clickable"
+        width="1.6"
+        height="1.2"
+        paint-canvas="color: #39a66f; brushSize: 10">
+      </a-plane>
+    </a-entity>
+
+    <!-- BARRA DEGLI STRUMENTI -->
+    <a-entity id="tools-bar" position="0 0.9 -1.4">
+
+      <!-- PULSANTE TAVOLOZZA COLORI -->
+      <a-circle id="palette-btn" class="clickable" radius="0.08" color="#444444" position="-0.50 0 0">
+        <a-sphere
+          id="color-preview-sphere"
+          radius="0.05"
+          color="#39a66f"
+          position="0 0 0.02">
+        </a-sphere>
+      </a-circle>
+
+      <!-- PULSANTE MENU PENNELLO (Slider) -->
+      <a-circle id="brush-btn" class="clickable" radius="0.08" color="#333333" position="-0.25 0 0">
+        <a-text value="Size" align="center" position="0 0 0.02" scale="0.32 0.32 0.32" color="#FFF"></a-text>
+      </a-circle>
+
+      <!-- 🆕 PULSANTE GOMMA (ERASER) -->
+      <a-box
+        id="eraser-btn"
+        class="clickable"
+        color="#555555"
+        width="0.20"
+        height="0.13"
+        depth="0.05"
+        position="0.00 0 0">
+        <a-text
+          value="Gomma"
+          align="center"
+          position="0 0 0.03"
+          scale="0.35 0.35 0.35"
+          color="#FFF">
+        </a-text>
+      </a-box>
+
+      <!-- PULSANTE PULISCI TELA -->
+      <a-box
+        id="pulisci-btn"
+        class="clickable"
+        color="#555555"
+        width="0.22"
+        height="0.13"
+        depth="0.05"
+        position="0.23 0 0">
+        <a-text
+          value="Pulisci"
+          align="center"
+          position="0 0 0.03"
+          scale="0.35 0.35 0.35"
+          color="#FFF">
+        </a-text>
+      </a-box>
+
+      <!-- MENU COLOR PICKER RGB -->
+      <a-entity id="palette-menu" position="0 -10 -10">
+        <a-plane
+          width="0.8"
+          height="0.95"
+          color="#444444"
+          position="0 0 0"
+          opacity="0.95">
+        </a-plane>
+
+        <a-circle
+          class="clickable"
+          color-wheel
+          radius="0.32"
+          position="0 0.1 0.02">
+        </a-circle>
+
+        <a-plane class="clickable quick-color" data-color="#FF3B30" width="0.1" height="0.1" color="#FF3B30" position="-0.28 -0.32 0.03"></a-plane>
+        <a-plane class="clickable quick-color" data-color="#FF9500" width="0.1" height="0.1" color="#FF9500" position="-0.14 -0.32 0.03"></a-plane>
+        <a-plane class="clickable quick-color" data-color="#FFCC00" width="0.1" height="0.1" color="#FFCC00" position="0 -0.32 0.03"></a-plane>
+        <a-plane class="clickable quick-color" data-color="#5856D6" width="0.1" height="0.1" color="#5856D6" position="0.14 -0.32 0.03"></a-plane>
+        <a-plane class="clickable quick-color" data-color="#FFFFFF" width="0.1" height="0.1" color="#FFFFFF" position="0.28 -0.32 0.03"></a-plane>
+      </a-entity>
+
+      <!-- MENU SLIDER IMPOSTAZIONI PENNELLO -->
+      <a-entity id="brush-menu" position="0 -10 -10">
+        <a-plane width="0.7" height="0.4" color="#333333" position="0 0 0" opacity="0.95"></a-plane>
+        
+        <a-text value="Dimensione Pennello" align="center" position="0 0.10 0.02" scale="0.35 0.35 0.35" color="#FFF"></a-text>
+
+        <a-entity position="0 0.03 0.02">
+          <a-plane width="0.15" height="0.06" color="#1a1a1a" opacity="0.8"></a-plane>
+          <a-text id="slider-value-text" value="10px" align="center" position="0 0 0.01" scale="0.3 0.3 0.3" color="#00ffcc"></a-text>
+        </a-entity>
+
+        <a-entity brush-slider="min: 2; max: 50; width: 0.5" position="0 -0.08 0.02">
+          <a-plane class="clickable" width="0.5" height="0.06" color="#222222" opacity="0.5" position="0 0 0"></a-plane>
+          <a-box width="0.46" height="0.015" depth="0.01" color="#4a69bd" position="0 0 0.01"></a-box>
+          <a-circle id="slider-handle" radius="0.035" color="#ffffff" position="-0.12 0 0.02"></a-circle>
+        </a-entity>
+      </a-entity>
+
+    </a-entity>
+
+    <!-- LA VOLPINA COMPAGNA -->
+    <a-entity
+      id="fox-companion"
+      position="1.3 0.8 -1.4"
+      rotation="0 -45 0"
+      pet-fox
+      fox-tutorial>
+
+      <a-entity id="fox-dialog-bubble" position="0 0.45 0">
+        <a-plane
+          width="1.3"
+          height="0.45"
+          color="#FFFFFF"
+          opacity="0.95">
+        </a-plane>
+
+        <a-text
+          id="fox-dialog-text"
+          value=""
+          color="#222"
+          align="center"
+          width="1.2"
+          position="0 0 0.01">
+        </a-text>
+      </a-entity>
+
+      <a-entity
+        id="fox-3d-model"
+        class="clickable"
+        gltf-model="#fox-model"
+        scale="0.05 0.05 0.05"
+        position="0 0 0">
+      </a-entity>
+
+    </a-entity>
+
+    <!-- RIG GIOCATORE -->
+    <a-entity id="player-rig" position="0 0 0">
+      <a-entity camera position="0 1.6 0" look-controls>
+        <a-entity
+          cursor="rayOrigin: mouse;"
+          raycaster="objects: .clickable">
+        </a-entity>
+      </a-entity>
+
+      <a-entity
+        laser-controls="hand: right"
+        raycaster="objects: .clickable">
+      </a-entity>
+
+      <a-entity
+        laser-controls="hand: left"
+        raycaster="objects: .clickable">
+      </a-entity>
+    </a-entity>
+
+  </a-scene>
+
+</body>
+</html>
