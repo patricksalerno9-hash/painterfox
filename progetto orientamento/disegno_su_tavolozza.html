@@ -368,7 +368,7 @@
 
         this.messages = [
           'Ciao! Benvenuto nel mio studio!\nAccarezzami o inizia a dipingere sulla tela!',
-          'Fantastico! Sotto la tela trovi la tavolozza e il tasto "Pulisci".',
+          'Fantastico! Sotto la tela trovi la tavolozza e il cestino per svuotarla.',
           'Stai andando benissimo! Crea il tuo capolavoro!'
         ];
 
@@ -392,6 +392,71 @@
 
       resetDialog: function () {
         this.updateDialog();
+      }
+    });
+
+    AFRAME.registerComponent('draggable-tool', {
+      init: function () {
+        this.isDragging = false;
+        this.moved = false;
+        this.suppressClick = false;
+        this.onDragStart = this.onDragStart.bind(this);
+        this.onDragEnd = this.onDragEnd.bind(this);
+        this.onClickCapture = this.onClickCapture.bind(this);
+
+        this.el.addEventListener('mousedown', this.onDragStart);
+        this.el.addEventListener('mouseup', this.onDragEnd);
+        this.el.addEventListener('click', this.onClickCapture, true);
+        window.addEventListener('mouseup', this.onDragEnd);
+      },
+
+      remove: function () {
+        this.el.removeEventListener('mousedown', this.onDragStart);
+        this.el.removeEventListener('mouseup', this.onDragEnd);
+        this.el.removeEventListener('click', this.onClickCapture, true);
+        window.removeEventListener('mouseup', this.onDragEnd);
+      },
+
+      onDragStart: function (evt) {
+        const cursorEl = evt.detail && evt.detail.cursorEl;
+        const raycaster = cursorEl && cursorEl.components.raycaster;
+        if (!raycaster || !raycaster.raycaster) return;
+
+        this.ray = raycaster.raycaster.ray;
+        this.dragDepth = new THREE.Vector3()
+          .subVectors(this.el.object3D.getWorldPosition(new THREE.Vector3()), this.ray.origin)
+          .dot(this.ray.direction);
+        this.dragDepth = Math.max(0.15, this.dragDepth);
+        this.startPosition = this.el.object3D.getWorldPosition(new THREE.Vector3());
+        this.isDragging = true;
+        this.moved = false;
+      },
+
+      tick: function () {
+        if (!this.isDragging || !this.ray) return;
+
+        const worldPosition = this.ray.at(this.dragDepth, new THREE.Vector3());
+        if (worldPosition.distanceToSquared(this.startPosition) > 0.0004) {
+          this.moved = true;
+        }
+
+        const parent = this.el.object3D.parent;
+        if (parent) parent.worldToLocal(worldPosition);
+        this.el.object3D.position.copy(worldPosition);
+      },
+
+      onDragEnd: function () {
+        if (!this.isDragging) return;
+        this.isDragging = false;
+        this.suppressClick = this.moved;
+        this.ray = null;
+      },
+
+      onClickCapture: function (evt) {
+        if (!this.suppressClick) return;
+        evt.preventDefault();
+        evt.stopImmediatePropagation();
+        this.suppressClick = false;
       }
     });
 
@@ -438,7 +503,7 @@
     function selezionaColore(colore) {
       isEraserActive = false;
       const eraserBtn = document.getElementById('eraser-btn');
-      if (eraserBtn) eraserBtn.setAttribute('color', '#555555');
+      if (eraserBtn) eraserBtn.setAttribute('color', '#f28aa5');
 
       const canvasEl = document.getElementById('canvas-surface');
       if (canvasEl && canvasEl.components['paint-canvas']) {
@@ -463,7 +528,7 @@
         }
       } else {
         // Disattiva la gomma (torna al colore precedente, es. verde o quello della preview)
-        if (eraserBtn) eraserBtn.setAttribute('color', '#555555');
+        if (eraserBtn) eraserBtn.setAttribute('color', '#f28aa5');
         const previewColor = document.getElementById('color-preview-sphere').getAttribute('material').color;
         if (canvasEl && canvasEl.components['paint-canvas']) {
           canvasEl.components['paint-canvas'].setColor(previewColor);
@@ -517,7 +582,7 @@
   <a-scene>
     <!-- ASSET SYSTEM -->
     <a-assets>
-      <a-asset-item id="fox-model" src="assets/foxblend.glb"></a-asset-item>
+      <a-asset-item id="fox-model" src="assets/Meshy_AI_Bright_Eyed_Fox_Pup_1008172248_texture.glb"></a-asset-item>
       <a-asset-item id="studio-model" src="assets/art_studio.glb"></a-asset-item>
     </a-assets>
 
@@ -544,56 +609,43 @@
     <!-- BARRA DEGLI STRUMENTI -->
     <a-entity id="tools-bar" position="0 0.9 -1.4">
 
-      <!-- PULSANTE TAVOLOZZA COLORI -->
-      <a-circle id="palette-btn" class="clickable" radius="0.08" color="#444444" position="-0.50 0 0">
-        <a-sphere
-          id="color-preview-sphere"
-          radius="0.05"
-          color="#39a66f"
-          position="0 0 0.02">
-        </a-sphere>
-      </a-circle>
+      <!-- TAVOLOZZA: apre la ruota dei colori -->
+      <a-entity id="palette-btn" class="clickable draggable-tool" geometry="primitive: circle; radius: 0.14" material="shader: flat; transparent: true; opacity: 0" position="-0.52 0 0">
+        <a-cylinder radius="0.14" height="0.025" color="#d9b879" rotation="90 0 0"></a-cylinder>
+        <a-circle radius="0.025" color="#75563b" position="0.085 -0.055 0.018"></a-circle>
+        <a-sphere radius="0.024" color="#e84a5f" position="-0.07 0.045 0.025"></a-sphere>
+        <a-sphere radius="0.024" color="#f6c445" position="-0.01 0.075 0.025"></a-sphere>
+        <a-sphere radius="0.024" color="#4a9e80" position="0.05 0.04 0.025"></a-sphere>
+        <a-sphere id="color-preview-sphere" radius="0.024" color="#39a66f" position="-0.005 -0.005 0.025"></a-sphere>
+      </a-entity>
 
-      <!-- PULSANTE MENU PENNELLO (Slider) -->
-      <a-circle id="brush-btn" class="clickable" radius="0.08" color="#333333" position="-0.25 0 0">
-        <a-text value="Size" align="center" position="0 0 0.02" scale="0.32 0.32 0.32" color="#FFF"></a-text>
-      </a-circle>
+      <!-- PENNELLO: apre il controllo della dimensione -->
+      <a-entity id="brush-btn" class="clickable draggable-tool" geometry="primitive: box; width: 0.09; height: 0.34; depth: 0.05" material="shader: flat; transparent: true; opacity: 0" position="-0.17 0 0" rotation="0 0 -35">
+        <a-cylinder radius="0.018" height="0.22" color="#bd7545" position="0 0 0.015"></a-cylinder>
+        <a-cylinder radius="0.022" height="0.045" color="#d8d1bd" position="0 0.12 0.015"></a-cylinder>
+        <a-cone radius-bottom="0.025" radius-top="0.006" height="0.075" color="#3d725a" position="0 0.18 0.015"></a-cone>
+      </a-entity>
 
-      <!-- 🆕 PULSANTE GOMMA (ERASER) -->
+      <!-- GOMMA: clic per attivarla o disattivarla -->
       <a-box
         id="eraser-btn"
-        class="clickable"
-        color="#555555"
-        width="0.20"
-        height="0.13"
-        depth="0.05"
-        position="0.00 0 0">
-        <a-text
-          value="Gomma"
-          align="center"
-          position="0 0 0.03"
-          scale="0.35 0.35 0.35"
-          color="#FFF">
-        </a-text>
+        class="clickable draggable-tool"
+        color="#f28aa5"
+        width="0.19"
+        height="0.105"
+        depth="0.055"
+        position="0.18 0 0"
+        rotation="0 0 -18">
+        <a-box color="#f7d8c5" width="0.035" height="0.108" depth="0.057" position="0 0 0.002"></a-box>
       </a-box>
 
-      <!-- PULSANTE PULISCI TELA -->
-      <a-box
-        id="pulisci-btn"
-        class="clickable"
-        color="#555555"
-        width="0.22"
-        height="0.13"
-        depth="0.05"
-        position="0.23 0 0">
-        <a-text
-          value="Pulisci"
-          align="center"
-          position="0 0 0.03"
-          scale="0.35 0.35 0.35"
-          color="#FFF">
-        </a-text>
-      </a-box>
+      <!-- CESTINO: svuota la tela -->
+      <a-entity id="pulisci-btn" class="clickable draggable-tool" geometry="primitive: box; width: 0.2; height: 0.25; depth: 0.1" material="shader: flat; transparent: true; opacity: 0" position="0.53 0 0">
+        <a-cylinder radius="0.072" radius-top="0.09" height="0.14" color="#43858b" position="0 -0.005 0"></a-cylinder>
+        <a-cylinder radius="0.096" height="0.018" color="#315d62" position="0 0.075 0"></a-cylinder>
+        <a-box color="#315d62" width="0.13" height="0.018" depth="0.018" position="0 0.095 0"></a-box>
+        <a-text value="SVUOTA" align="center" position="0 -0.12 0.02" scale="0.28 0.28 0.28" color="#263b3d"></a-text>
+      </a-entity>
 
       <!-- MENU COLOR PICKER RGB -->
       <a-entity id="palette-menu" position="0 -10 -10">
